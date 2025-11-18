@@ -1,0 +1,128 @@
+Sub 表形式マクロ_最終完成版()
+
+    '=================================================================
+    ' 【最終完成版】事業所名とデータの列が異なる複雑な配置に対応
+    '=================================================================
+
+    ' --- ① 初期設定 ---
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    ' --- ② 変数定義 ---
+    Dim wsSrc As Worksheet, wsDest As Worksheet
+    Dim 転記先の行 As Long
+    Dim ブロック開始行 As Long
+    Dim 科目セル As Range
+    Dim i As Integer ' ループカウンター
+
+    ' --- ③ ワークシート設定 ---
+    On Error GoTo ErrorHandler
+    Set wsSrc = ThisWorkbook.Sheets("事業活動計算")
+    Set wsDest = ThisWorkbook.Sheets("表形式")
+
+    ' --- ④ メイン処理開始 ---
+    wsDest.Rows("2:" & wsDest.Rows.Count).ClearContents
+    転記先の行 = 1
+
+    '----------------------------------------------------------------------
+    ' ▼▼▼【最終修正点】▼▼▼
+    ' 教えていただいた2つの列の対応関係を、2つの配列で管理します。
+    '----------------------------------------------------------------------
+    Dim 事業所名の列配列 As Variant
+    Dim データ開始列配列 As Variant
+    
+    ' 事業所名が記載されている列
+    事業所名の列配列 = Array("C", "L", "M", "V", "W")
+    ' 上記の各事業所に対応する「データ（実績額）」が始まる列
+    データ開始列配列 = Array("C", "H", "M", "R", "W")
+
+    ' [ループ1] 定義した配列の組み合わせで処理
+    For i = 0 To UBound(事業所名の列配列)
+        Dim 事業所名の列 As String, データ開始列 As String
+        事業所名の列 = 事業所名の列配列(i)
+        データ開始列 = データ開始列配列(i)
+
+        ' [ループ2] データブロックごと
+        For ブロック開始行 = 3 To wsSrc.Cells(wsSrc.Rows.Count, "B").End(xlUp).Row Step 28
+            Dim 事業所名 As String
+            事業所名 = wsSrc.Cells(ブロック開始行 - 1, 事業所名の列).Value
+            If 事業所名 = "" Then GoTo 次のブロックへ
+
+            ' --- 日付抽出処理 ---
+            Dim 報告月 As String, 元のテキスト As String, regEx As Object, matches As Object
+            Dim 年 As String, 月 As String, 開始月 As String, 終了月 As String
+
+            Set regEx = CreateObject("VBScript.RegExp")
+            With regEx
+                .Global = False
+                .Pattern = "\d{6}-\d{2}|\d{6}"
+            End With
+            元のテキスト = wsSrc.Cells(ブロック開始行 - 1, "A").Value
+            Set matches = regEx.Execute(元のテキスト)
+            If matches.Count > 0 Then
+                Dim foundText As String: foundText = matches(0).Value
+                If InStr(foundText, "-") > 0 Then
+                    年 = Left(foundText, 4): 開始月 = Mid(foundText, 5, 2): 終了月 = Mid(foundText, 8, 2)
+                    報告月 = 年 & "年" & Val(開始月) & "月～" & 年 & "年" & Val(終了月) & "月度"
+                Else
+                    年 = Left(foundText, 4): 月 = Right(foundText, 2)
+                    報告月 = 年 & "年" & Val(月) & "月度"
+                End If
+            Else
+                報告月 = "日付不明"
+            End If
+
+            ' [ループ3] 科目名ごと
+            For Each 科目セル In wsSrc.Range("B" & ブロック開始行 + 1, "B" & ブロック開始行 + 27)
+                If 科目セル.Value <> "" Then
+                    転記先の行 = 転記先の行 + 1
+                    wsDest.Cells(転記先の行, "A").Value = 報告月
+                    wsDest.Cells(転記先の行, "B").Value = 事業所名
+                    wsDest.Cells(転記先の行, "C").Value = 科目セル.Value
+
+                    ' [ループ4] 「表形式」シートのヘッダーごと
+                    Dim データ開始列の番号 As Long
+                    データ開始列の番号 = wsSrc.Range(データ開始列 & 1).Column
+
+                    Dim 表形式ヘッダーセル As Range
+                    For Each 表形式ヘッダーセル In wsDest.Range("D1", wsDest.Cells(1, wsDest.Columns.Count).End(xlToLeft))
+                        Dim 列オフセット As Long, 表形式ヘッダー名 As String
+                        表形式ヘッダー名 = 表形式ヘッダーセル.Value
+                        Select Case 表形式ヘッダー名
+                            Case "実績額": 列オフセット = 0
+                            Case "収益比": 列オフセット = 1
+                            Case "予算額": 列オフセット = 2
+                            Case "予算比": 列オフセット = 3
+                            Case "前年比": 列オフセット = 4
+                            Case Else: 列オフセット = -1
+                        End Select
+                        If 列オフセット >= 0 Then
+                            wsDest.Cells(転記先の行, 表形式ヘッダーセル.Column).Value = wsSrc.Cells(科目セル.Row, データ開始列の番号 + 列オフセット).Value
+                        End If
+                    Next 表形式ヘッダーセル
+                End If
+            Next 科目セル
+次のブロックへ:
+        Next ブロック開始行
+    Next i
+
+    ' --- 並べ替え処理 ---
+    If 転記先の行 > 1 Then
+        Dim sortRange As Range
+        Set sortRange = wsDest.Range("A1", wsDest.Cells(転記先の行, wsDest.Cells(1, wsDest.Columns.Count).End(xlToLeft).Column))
+        sortRange.Sort Key1:=wsDest.Range("A1"), Order1:=xlAscending, Header:=xlYes
+    End If
+
+    ' --- ⑤ 終了処理 ---
+    wsDest.Columns.AutoFit
+    wsDest.Select
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Exit Sub
+
+' --- エラー処理 ---
+ErrorHandler:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+
+End Sub
