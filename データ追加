@@ -1,0 +1,128 @@
+Sub CreateSummaryReport_Append()
+
+    '=================================================================
+    ' 【追記形式・修正版】既存データは残し、新しいデータのみを追加
+    '=================================================================
+
+    ' --- ① 初期設定 ---
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    ' --- ② 変数定義 ---
+    Dim wsSource As Worksheet, wsDest As Worksheet
+    Dim sourceLastRow As Long, destLastRow As Long
+    Dim i As Long
+    Dim dict As Object, existingDict As Object
+    Dim key As Variant
+
+    ' --- ③ ワークシート設定 ---
+    On Error Resume Next
+    Set wsSource = ThisWorkbook.Sheets("表形式")
+    If wsSource Is Nothing Then
+        MsgBox "「表形式」シートが見つかりません。", vbCritical
+        Exit Sub
+    End If
+
+    Set wsDest = ThisWorkbook.Sheets("集計")
+    If wsDest Is Nothing Then
+        Set wsDest = ThisWorkbook.Sheets.Add(After:=wsSource)
+        wsDest.Name = "集計"
+    End If
+    On Error GoTo 0
+
+    '----------------------------------------------------------------------
+    ' ▼▼▼【修正点】▼▼▼
+    ' 「集計」シートの既存データを読み込み、チェック用のリストを作成します。
+    '----------------------------------------------------------------------
+    Set existingDict = CreateObject("Scripting.Dictionary")
+    destLastRow = wsDest.Cells(wsDest.Rows.Count, "A").End(xlUp).Row
+
+    If destLastRow > 1 Then 'ヘッダー以外にデータがある場合
+        For i = 2 To destLastRow
+            Dim existingKey As String
+            existingKey = wsDest.Cells(i, "A").Value & "|" & wsDest.Cells(i, "B").Value
+            If Not existingDict.Exists(existingKey) Then
+                existingDict.Add existingKey, Nothing
+            End If
+        Next i
+    End If
+
+    ' --- ④ 「表形式」シートのデータを読み込み、グループ化 ---
+    Set dict = CreateObject("Scripting.Dictionary")
+    sourceLastRow = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).Row
+
+    ' ヘッダーの列番号を事前に取得
+    Dim dateCol As Long, officeCol As Long, itemCol As Long, valueCol As Long, budgetRatioCol As Long, yearRatioCol As Long
+    dateCol = Application.Match("日付", wsSource.Rows(1), 0)
+    officeCol = Application.Match("事業所", wsSource.Rows(1), 0)
+    itemCol = Application.Match("科 目 名", wsSource.Rows(1), 0)
+    valueCol = Application.Match("実績額", wsSource.Rows(1), 0)
+    budgetRatioCol = Application.Match("予算比", wsSource.Rows(1), 0)
+    yearRatioCol = Application.Match("前年比", wsSource.Rows(1), 0)
+
+    For i = 2 To sourceLastRow
+        Dim groupKey As String
+        groupKey = wsSource.Cells(i, dateCol).Value & "|" & wsSource.Cells(i, officeCol).Value
+        
+        If Not dict.Exists(groupKey) Then
+            Set dict(groupKey) = CreateObject("Scripting.Dictionary")
+        End If
+
+        Dim itemName As String
+        itemName = wsSource.Cells(i, itemCol).Value
+        
+        Select Case itemName
+            Case "当期活動増減差額"
+                dict(groupKey)("増減差額（円）") = wsSource.Cells(i, valueCol).Value
+                dict(groupKey)("予算比差額") = wsSource.Cells(i, budgetRatioCol).Value
+                dict(groupKey)("前年比差額") = wsSource.Cells(i, yearRatioCol).Value
+            Case "収益計"
+                dict(groupKey)("予算比収益") = wsSource.Cells(i, budgetRatioCol).Value
+                dict(groupKey)("前年比収益") = wsSource.Cells(i, yearRatioCol).Value
+            Case "費用計"
+                dict(groupKey)("予算比費用") = wsSource.Cells(i, budgetRatioCol).Value
+                dict(groupKey)("前年比費用") = wsSource.Cells(i, yearRatioCol).Value
+        End Select
+    Next i
+
+    ' --- ⑤ 集計シートへの書き出し ---
+    ' wsDest.Cells.Clear を削除し、上書きしないように変更
+    If destLastRow = 0 Then
+         ' ヘッダーが完全にない場合のみ書き込み
+        Dim headers As Variant
+        headers = Array("日付", "事業所", "増減差額（円）", "予算比収益", "予算比費用", "予算比差額", "前年比収益", "前年比費用", "前年比差額")
+        wsDest.Range("A1").Resize(1, UBound(headers) + 1).Value = headers
+        destLastRow = 1
+    End If
+    
+    Dim addedDataCount As Long
+    addedDataCount = 0
+
+    ' グループ化したデータを1行ずつ書き出し
+    For Each key In dict.Keys
+        '----------------------------------------------------------------------
+        ' ▼▼▼【修正点】▼▼▼
+        ' 既存データリストにキーが存在しない場合のみ、追記処理を実行します。
+        '----------------------------------------------------------------------
+        If Not existingDict.Exists(key) Then
+            destLastRow = destLastRow + 1
+            wsDest.Cells(destLastRow, "A").Value = Split(key, "|")(0)
+            wsDest.Cells(destLastRow, "B").Value = Split(key, "|")(1)
+            wsDest.Cells(destLastRow, "C").Value = dict(key)("増減差額（円）")
+            wsDest.Cells(destLastRow, "D").Value = dict(key)("予算比収益")
+            wsDest.Cells(destLastRow, "E").Value = dict(key)("予算比費用")
+            wsDest.Cells(destLastRow, "F").Value = dict(key)("予算比差額")
+            wsDest.Cells(destLastRow, "G").Value = dict(key)("前年比収益")
+            wsDest.Cells(destLastRow, "H").Value = dict(key)("前年比費用")
+            wsDest.Cells(destLastRow, "I").Value = dict(key)("前年比差額")
+            addedDataCount = addedDataCount + 1 '追加したデータ件数をカウント
+        End If
+    Next key
+
+    ' --- ⑥ 終了処理 ---
+    wsDest.Columns.AutoFit
+    wsDest.Select
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+
+End Sub
